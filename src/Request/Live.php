@@ -82,6 +82,8 @@ class Live extends RequestCollection
     /**
      * Get the viewer list of a broadcast.
      *
+     * WARNING: You MUST be the owner of the broadcast. Otherwise Instagram won't send any API reply!
+     *
      * @param string $broadcastId The broadcast ID in Instagram's internal format (ie "17854587811139572").
      *
      * @throws \InstagramAPI\Exception\InstagramException
@@ -223,8 +225,9 @@ class Live extends RequestCollection
     /**
      * Get broadcast comments.
      *
-     * @param string $broadcastId   The broadcast ID in Instagram's internal format (ie "17854587811139572").
-     * @param int    $lastCommentTs Last comments timestamp (optional).
+     * @param string $broadcastId       The broadcast ID in Instagram's internal format (ie "17854587811139572").
+     * @param int    $lastCommentTs     Last comments timestamp (optional).
+     * @param int    $commentsRequested Number of comments requested (optional).
      *
      * @throws \InstagramAPI\Exception\InstagramException
      *
@@ -232,10 +235,12 @@ class Live extends RequestCollection
      */
     public function getComments(
         $broadcastId,
-        $lastCommentTs = 0)
+        $lastCommentTs = 0,
+        $commentsRequested = 3)
     {
         return $this->ig->request("live/{$broadcastId}/get_comment/")
             ->addParam('last_comment_ts', $lastCommentTs)
+            ->addParam('num_comments_requested', $commentsRequested)
             ->getResponse(new Response\BroadcastCommentsResponse());
     }
 
@@ -259,6 +264,44 @@ class Live extends RequestCollection
             ->addParam('starting_offset', $startingOffset)
             ->addParam('encoding_tag', $encodingTag)
             ->getResponse(new Response\PostLiveCommentsResponse());
+    }
+
+    /**
+     * Enable viewer comments on your live broadcast.
+     *
+     * @param string $broadcastId The broadcast ID in Instagram's internal format (ie "17854587811139572").
+     *
+     * @throws \InstagramAPI\Exception\InstagramException
+     *
+     * @return \InstagramAPI\Response\EnableDisableLiveCommentsResponse
+     */
+    public function enableComments(
+        $broadcastId)
+    {
+        return $this->ig->request("live/{$broadcastId}/unmute_comment/")
+            ->addPost('_uid', $this->ig->account_id)
+            ->addPost('_uuid', $this->ig->uuid)
+            ->addPost('_csrftoken', $this->ig->client->getToken())
+            ->getResponse(new Response\EnableDisableLiveCommentsResponse());
+    }
+
+    /**
+     * Disable viewer comments on your live broadcast.
+     *
+     * @param string $broadcastId The broadcast ID in Instagram's internal format (ie "17854587811139572").
+     *
+     * @throws \InstagramAPI\Exception\InstagramException
+     *
+     * @return \InstagramAPI\Response\EnableDisableLiveCommentsResponse
+     */
+    public function disableComments(
+        $broadcastId)
+    {
+        return $this->ig->request("live/{$broadcastId}/mute_comment/")
+            ->addPost('_uid', $this->ig->account_id)
+            ->addPost('_uuid', $this->ig->uuid)
+            ->addPost('_csrftoken', $this->ig->client->getToken())
+            ->getResponse(new Response\EnableDisableLiveCommentsResponse());
     }
 
     /**

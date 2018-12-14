@@ -4,6 +4,7 @@ namespace InstagramAPI;
 
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Cookie\CookieJar;
+use GuzzleHttp\Cookie\SetCookie;
 use GuzzleHttp\HandlerStack;
 use InstagramAPI\Exception\InstagramException;
 use InstagramAPI\Exception\LoginRequiredException;
@@ -216,8 +217,8 @@ class Client
     public function getToken()
     {
         $cookie = $this->getCookie('csrftoken', 'i.instagram.com');
-        if ($cookie === null || $cookie->getExpires() <= time()) {
-            return; // Ugh, StyleCI doesn't allow "return null;" for clarity. ;)
+        if ($cookie === null || $cookie->getValue() === '') {
+            return null;
         }
 
         return $cookie->getValue();
@@ -230,7 +231,7 @@ class Client
      * @param string|null $domain (optional) Require a specific domain match.
      * @param string|null $path   (optional) Require a specific path match.
      *
-     * @return \GuzzleHttp\Cookie\SetCookie|null A cookie if found, otherwise NULL.
+     * @return \GuzzleHttp\Cookie\SetCookie|null A cookie if found and non-expired, otherwise NULL.
      */
     public function getCookie(
         $name,
@@ -239,12 +240,20 @@ class Client
     {
         $foundCookie = null;
         if ($this->_cookieJar instanceof CookieJar) {
+            /** @var SetCookie $cookie */
             foreach ($this->_cookieJar->getIterator() as $cookie) {
-                if ($cookie->getName() == $name
-                    && ($domain === null || $cookie->getDomain() == $domain)
-                    && ($path === null || $cookie->getPath() == $path)) {
+                if ($cookie->getName() === $name
+                    && !$cookie->isExpired()
+                    && ($domain === null || $cookie->matchesDomain($domain))
+                    && ($path === null || $cookie->matchesPath($path))) {
+                    // Loop-"break" is omitted intentionally, because we might
+                    // have more than one cookie with the same name, so we will
+                    // return the LAST one. This is necessary because Instagram
+                    // has changed their cookie domain from `i.instagram.com` to
+                    // `.instagram.com` and we want the *most recent* cookie.
+                    // Guzzle's `CookieJar::setCookie()` always places the most
+                    // recently added/modified cookies at the *end* of array.
                     $foundCookie = $cookie;
-                    break;
                 }
             }
         }
@@ -379,21 +388,21 @@ class Client
     /**
      * Output debugging information.
      *
-     * @param string      $method        "GET" or "POST".
-     * @param string      $url           The URL or endpoint used for the request.
-     * @param string|null $uploadedBody  What was sent to the server. Use NULL to
-     *                                   avoid displaying it.
-     * @param int|null    $uploadedBytes How many bytes were uploaded. Use NULL to
-     *                                   avoid displaying it.
-     * @param object      $response      The Guzzle response object from the request.
-     * @param string      $responseBody  The actual text-body reply from the server.
+     * @param string                $method        "GET" or "POST".
+     * @param string                $url           The URL or endpoint used for the request.
+     * @param string|null           $uploadedBody  What was sent to the server. Use NULL to
+     *                                             avoid displaying it.
+     * @param int|null              $uploadedBytes How many bytes were uploaded. Use NULL to
+     *                                             avoid displaying it.
+     * @param HttpResponseInterface $response      The Guzzle response object from the request.
+     * @param string                $responseBody  The actual text-body reply from the server.
      */
     protected function _printDebug(
         $method,
         $url,
         $uploadedBody,
         $uploadedBytes,
-        $response,
+        HttpResponseInterface $response,
         $responseBody)
     {
         Debug::printRequest($method, $url);
@@ -412,9 +421,11 @@ class Client
 
         // Display the number of bytes received from the response, and status code.
         if ($response->hasHeader('x-encoded-content-length')) {
-            $bytes = Utils::formatBytes($response->getHeader('x-encoded-content-length')[0]);
+            $bytes = Utils::formatBytes((int) $response->getHeaderLine('x-encoded-content-length'));
+        } elseif ($response->hasHeader('Content-Length')) {
+            $bytes = Utils::formatBytes((int) $response->getHeaderLine('Content-Length'));
         } else {
-            $bytes = Utils::formatBytes($response->getHeader('Content-Length')[0]);
+            $bytes = 0;
         }
         Debug::printHttpCode($response->getStatusCode(), $bytes);
 
@@ -429,21 +440,25 @@ class Client
      *
      * @param Response              $responseObject An instance of a class object whose
      *                                              properties to fill with the response.
-     * @param mixed                 $serverResponse A decoded JSON response from
-     *                                              Instagram's server.
+     * @param string                $rawResponse    A raw JSON response string
+     *                                              from Instagram's server.
      * @param HttpResponseInterface $httpResponse   HTTP response object.
      *
      * @throws InstagramException In case of invalid or failed API response.
      */
     public function mapServerResponse(
         Response $responseObject,
-        $serverResponse,
+        $rawResponse,
         HttpResponseInterface $httpResponse)
     {
+        // Attempt to decode the raw JSON to an array.
+        // Important: Special JSON decoder which handles 64-bit numbers!
+        $jsonArray = $this->api_body_decode($rawResponse, true);
+
         // If the server response is not an array, it means that JSON decoding
         // failed or some other bad thing happened. So analyze the HTTP status
         // code (if available) to see what really happened.
-        if (!is_array($serverResponse)) {
+        if (!is_array($jsonArray)) {
             $httpStatusCode = $httpResponse !== null ? $httpResponse->getStatusCode() : null;
             switch ($httpStatusCode) {
                 case 400:
@@ -459,7 +474,7 @@ class Client
         try {
             // Assign the new object data. Only throws if custom _init() fails.
             // NOTE: False = assign data without automatic analysis.
-            $responseObject->assignObjectData($serverResponse, false); // Throws.
+            $responseObject->assignObjectData($jsonArray, false); // Throws.
 
             // Use API developer debugging? We'll throw if class lacks property
             // definitions, or if they can't be mapped as defined in the class
@@ -485,6 +500,32 @@ class Client
                 }
             }
         } catch (LazyJsonMapperException $e) {
+            // Since there was a problem, let's help our developers by
+            // displaying the server's JSON data in a human-readable format,
+            // which makes it easy to see the structure and necessary changes
+            // and speeds up the job of updating responses and models.
+            try {
+                // Decode to stdClass to properly preserve empty objects `{}`,
+                // otherwise they would appear as empty `[]` arrays in output.
+                // NOTE: Large >32-bit numbers will be transformed into strings,
+                // which helps us see which numeric values need "string" type.
+                $jsonObject = $this->api_body_decode($rawResponse, false);
+                if (is_object($jsonObject)) {
+                    $prettyJson = @json_encode(
+                        $jsonObject,
+                        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                    );
+                    if ($prettyJson !== false) {
+                        Debug::printResponse(
+                            'Human-Readable Response:'.PHP_EOL.$prettyJson,
+                            false // Not truncated.
+                        );
+                    }
+                }
+            } catch (\Exception $e) {
+                // Ignore errors.
+            }
+
             // Exceptions will only be thrown if API developer debugging is
             // enabled and finds a problem. Either way, we should re-wrap the
             // exception to our native type instead. The message gives enough
@@ -584,8 +625,9 @@ class Client
      * @param HttpRequestInterface $request       HTTP request to send.
      * @param array                $guzzleOptions Extra Guzzle options for this request.
      *
-     * @throws \InstagramAPI\Exception\NetworkException   For any network/socket related errors.
-     * @throws \InstagramAPI\Exception\ThrottledException When we're throttled by server.
+     * @throws \InstagramAPI\Exception\NetworkException                For any network/socket related errors.
+     * @throws \InstagramAPI\Exception\ThrottledException              When we're throttled by server.
+     * @throws \InstagramAPI\Exception\RequestHeadersTooLargeException When request is too large.
      *
      * @return HttpResponseInterface
      */
@@ -609,6 +651,9 @@ class Client
         switch ($httpCode) {
         case 429: // "429 Too Many Requests"
             throw new \InstagramAPI\Exception\ThrottledException('Throttled by Instagram because of too many API requests.');
+            break;
+        case 431: // "431 Request Header Fields Too Large"
+            throw new \InstagramAPI\Exception\RequestHeadersTooLargeException('The request start-line and/or headers are too large to process.');
             break;
         // WARNING: Do NOT detect 404 and other higher-level HTTP errors here,
         // since we catch those later during steps like mapServerResponse()
@@ -753,7 +798,7 @@ class Client
         $json,
         $assoc = true)
     {
-        return json_decode($json, $assoc, 512, JSON_BIGINT_AS_STRING);
+        return @json_decode($json, $assoc, 512, JSON_BIGINT_AS_STRING);
     }
 
     /**

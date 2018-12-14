@@ -6,8 +6,8 @@ date_default_timezone_set('UTC');
 require __DIR__.'/../vendor/autoload.php';
 
 /////// CONFIG ///////
-$username = 'makingitnow';
-$password = 'Sherlocked4';
+$username = '';
+$password = '';
 $debug = true;
 $truncatedDebug = false;
 //////////////////////
@@ -22,23 +22,7 @@ try {
 }
 
 try {
-    $stories = $ig->story->getUserStoryFeed($ig->account_id);
-
-    foreach($stories->getReel()->getItems() as $item) { //foreach element in $arr
-        $maxId = null;
-        $viewers = [];
-        do {
-            $response = $ig->story->getStoryItemViewers($item->getPk(), $maxId);
-            $viewers = array_merge($viewers, $response->getUsers());
-            $maxId = $response->getNextMaxId();
-        } while ($maxId !== null);
-        $serializedData = serialize($viewers);
-        
-        // save serialized data in a text file
-        file_put_contents($item->getPk() . '.txt', $serializedData);
-    }
-
-    /*$feed = $ig->discover->getPopularFeed();
+    $feed = $ig->discover->getExploreFeed();
 
     // Let's begin by looking at a beautiful debug output of what's available in
     // the response! This is very helpful for figuring out what a response has!
@@ -49,13 +33,13 @@ try {
     // properties are supported, as well as how to call the functions! :-)
     $feed->printPropertyDescriptions();
 
-    // The getPopularFeed() has an "items" property, which we need. As we saw
+    // The getExploreFeed() has an "items" property, which we need. As we saw
     // above, we should get it via "getItems()". The property list above told us
     // that it will return an array of "Item" objects. Therefore it's an ARRAY!
     $items = $feed->getItems();
 
-    // Let's get the first item from the array...!
-    $firstItem = $items[0];
+    // Let's get the media item from the first item of the explore-items array...!
+    $firstItem = $items[0]->getMedia();
 
     // We can look at that item too, if we want to... Let's do it! Note that
     // when we list supported properties, it shows everything supported by an
@@ -84,7 +68,7 @@ try {
     echo 'There are '.count($items)." items.\n";
     echo "The first item has media id: {$firstItem_mediaId}.\n";
     echo "The first item was uploaded by: {$firstItem_username}.\n";
-    echo "The highest quality image URL is: {$firstItem_imageUrl}.\n";*/
+    echo "The highest quality image URL is: {$firstItem_imageUrl}.\n";
 } catch (\Exception $e) {
     echo 'Something went wrong: '.$e->getMessage()."\n";
 }

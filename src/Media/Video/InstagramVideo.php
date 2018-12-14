@@ -6,6 +6,7 @@ use InstagramAPI\Media\Geometry\Dimensions;
 use InstagramAPI\Media\Geometry\Rectangle;
 use InstagramAPI\Media\InstagramMedia;
 use InstagramAPI\Utils;
+use Winbox\Args;
 
 /**
  * Automatically prepares a video file according to Instagram's rules.
@@ -14,15 +15,15 @@ use InstagramAPI\Utils;
  */
 class InstagramVideo extends InstagramMedia
 {
-    /** @var FFmpegWrapper */
-    protected $_ffmpegWrapper;
+    /** @var FFmpeg */
+    protected $_ffmpeg;
 
     /**
      * Constructor.
      *
-     * @param string             $inputFile     Path to an input file.
-     * @param array              $options       An associative array of optional parameters.
-     * @param FFmpegWrapper|null $ffmpegWrapper Custom FFmpeg wrapper.
+     * @param string      $inputFile Path to an input file.
+     * @param array       $options   An associative array of optional parameters.
+     * @param FFmpeg|null $ffmpeg    Custom FFmpeg wrapper.
      *
      * @throws \InvalidArgumentException
      * @throws \RuntimeException
@@ -32,17 +33,15 @@ class InstagramVideo extends InstagramMedia
     public function __construct(
         $inputFile,
         array $options = [],
-        FFmpegWrapper $ffmpegWrapper = null)
+        FFmpeg $ffmpeg = null)
     {
         parent::__construct($inputFile, $options);
-        $this->_details = new VideoDetails($inputFile);
-
-        $this->_ffmpegWrapper = $ffmpegWrapper;
-        if ($this->_ffmpegWrapper === null) {
-            $this->_ffmpegWrapper = Utils::getFFmpegWrapper();
-        }
-
         $this->_details = new VideoDetails($this->_inputFile);
+
+        $this->_ffmpeg = $ffmpeg;
+        if ($this->_ffmpeg === null) {
+            $this->_ffmpeg = FFmpeg::factory();
+        }
     }
 
     /** {@inheritdoc} */
@@ -115,34 +114,77 @@ class InstagramVideo extends InstagramMedia
             sprintf('pad=w=%d:h=%d:x=%d:y=%d:color=%s', $canvas->getWidth(), $canvas->getHeight(), $dstRect->getX(), $dstRect->getY(), $bgColor),
         ];
 
-        $inputFormat = '';
+        $attempt = 0;
+        do {
+            ++$attempt;
 
-        // Rotate the video (if needed to).
-        $rotationFilters = $this->_getRotationFilters();
-        if (count($rotationFilters)) {
-            if ($this->_ffmpegWrapper->hasNoAutorotate()) {
-                $inputFormat = '-noautorotate';
+            // Reset the messageline-array to avoid mixing runs.
+            $ffmpegOutput = [];
+
+            // Get the flags to apply to the input file.
+            $inputFlags = $this->_getInputFlags($attempt);
+
+            // Rotate the video (if needed to).
+            $rotationFilters = $this->_getRotationFilters();
+            if (count($rotationFilters)) {
+                if ($this->_ffmpeg->hasNoAutorotate()) {
+                    $inputFlags[] = '-noautorotate';
+                }
+                $filters = array_merge($filters, $rotationFilters);
             }
-            $filters = array_merge($filters, $rotationFilters);
-        }
 
-        // Video format can't copy since we always need to re-encode due to video filtering.
-        $this->_ffmpegWrapper->run(sprintf(
-            '%s -i %s -y -vf %s %s %s',
-            $inputFormat,
-            escapeshellarg($this->_inputFile),
-            escapeshellarg(implode(',', $filters)),
-            $this->_getOutputFormat(),
-            escapeshellarg($outputFile)
-        ));
+            // Video format can't copy since we always need to re-encode due to video filtering.
+            $ffmpegOutput = $this->_ffmpeg->run(sprintf(
+                '-y %s -i %s -vf %s %s %s',
+                implode(' ', $inputFlags),
+                Args::escape($this->_inputFile),
+                Args::escape(implode(',', $filters)),
+                implode(' ', $this->_getOutputFlags($attempt)),
+                Args::escape($outputFile)
+            ));
+        } while ($this->_ffmpegMustRunAgain($attempt, $ffmpegOutput));
     }
 
     /**
-     * Get the output format.
+     * Internal function to determine whether ffmpeg needs to run again.
      *
-     * @return string
+     * @param int      $attempt      Which ffmpeg attempt just executed.
+     * @param string[] $ffmpegOutput Array of error strings from the attempt.
+     *
+     * @throws \RuntimeException If this function wants to give up and determines
+     *                           that we cannot succeed and should throw completely.
+     *
+     * @return bool TRUE to run again, FALSE to accept the current output.
      */
-    protected function _getOutputFormat()
+    protected function _ffmpegMustRunAgain(
+        $attempt,
+        array $ffmpegOutput)
+    {
+        return false;
+    }
+
+    /**
+     * Get the input flags (placed before the input filename).
+     *
+     * @param int $attempt The current ffmpeg execution attempt.
+     *
+     * @return string[]
+     */
+    protected function _getInputFlags(
+        $attempt)
+    {
+        return [];
+    }
+
+    /**
+     * Get the output flags (placed before the output filename).
+     *
+     * @param int $attempt The current ffmpeg execution attempt.
+     *
+     * @return string[]
+     */
+    protected function _getOutputFlags(
+        $attempt)
     {
         $result = [
             '-metadata:s:v rotate=""', // Strip rotation from metadata.
@@ -154,7 +196,7 @@ class InstagramVideo extends InstagramMedia
 
         // Force AAC for the audio.
         if ($this->_details->getAudioCodec() !== 'aac') {
-            if ($this->_ffmpegWrapper->hasLibFdkAac()) {
+            if ($this->_ffmpeg->hasLibFdkAac()) {
                 $result[] = '-c:a libfdk_aac -vbr 4';
             } else {
                 // The encoder 'aac' is experimental but experimental codecs are not enabled,
@@ -175,7 +217,7 @@ class InstagramVideo extends InstagramMedia
             $times = ceil($this->_constraints->getMinDuration() / $this->_details->getDuration());
         }
 
-        return implode(' ', $result);
+        return $result;
     }
 
     /**

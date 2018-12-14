@@ -39,6 +39,8 @@ class StorageHandler
         'last_fbns_token', // Tracks time elapsed since our last FBNS token refresh.
         'last_login', // Tracks time elapsed since our last login state refresh.
         'last_experiments', // Tracks time elapsed since our last experiments refresh.
+        'datacenter', // Preferred data center (region-based).
+        'presence_disabled', // Whether the presence feature has been disabled by user.
     ];
 
     /**
@@ -70,6 +72,14 @@ class StorageHandler
         'ig_android_gqls_typing_indicator',
         'ig_android_upload_reliability_universe',
         'ig_android_photo_fbupload_universe',
+        'ig_android_video_segmented_upload_universe',
+        'ig_android_direct_video_segmented_upload_universe',
+        'ig_android_reel_raven_video_segmented_upload_universe',
+        'ig_android_ad_async_ads_universe',
+        'ig_android_direct_inbox_presence',
+        'ig_android_direct_thread_presence',
+        'ig_android_mqtt_region_hint_universe',
+        'ig_android_rtc_reshare',
     ];
 
     /**

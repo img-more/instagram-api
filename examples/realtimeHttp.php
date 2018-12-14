@@ -2,8 +2,14 @@
 
 /*
  * IMPORTANT!
- * You need https://github.com/reactphp/http in order to run this example.
+ * You need https://github.com/reactphp/http to run this example:
  * $ composer require react/http "^0.7"
+ *
+ * Also, https://github.com/Seldaek/monolog is required:
+ * $ composer require monolog/monolog
+ *
+ * Lastly, if you have a 32-bit PHP build, you have to enable the GMP extension:
+ * http://php.net/manual/en/book.gmp.php
  *
  * Usage:
  * # mark item 456 in thread 123 as seen
@@ -12,6 +18,16 @@
  * $ curl -i 'http://127.0.0.1:1307/activity?threadId=123&flag=1'
  * # send some message to thread 123
  * $ curl -i 'http://127.0.0.1:1307/message?threadId=123&text=Hi!'
+ * # share post 456_789 to thread 123
+ * $ curl -i 'http://127.0.0.1:1307/post?threadId=123&mediaId=456_789&text=This+is+a+really+good+post!'
+ * # share story 456_789 to thread 123
+ * $ curl -i 'http://127.0.0.1:1307/story?threadId=123&storyId=456_789&text=This+is+a+really+good+story!'
+ * # share profile 456789 to thread 123
+ * $ curl -i 'http://127.0.0.1:1307/profile?threadId=123&userId=456789&text=Take+a+look+at+their+posts!'
+ * # send location 456789 to thread 123
+ * $ curl -i 'http://127.0.0.1:1307/location?threadId=123&locationId=456789&text=I+want+to+go+there!'
+ * # send hashtag #somehashtag to thread 123
+ * $ curl -i 'http://127.0.0.1:1307/hashtag?threadId=123&hashtag=somehashtag&text=It+went+viral!'
  * # like item 456 from thread 123
  * $ curl -i 'http://127.0.0.1:1307/likeItem?threadId=123&threadItemId=456'
  * # unlike item 456 from thread 123
@@ -140,13 +156,13 @@ class RealtimeHttpServer
     /**
      * Called when ACK has been received.
      *
-     * @param \InstagramAPI\Realtime\Action\Ack $ack
+     * @param \InstagramAPI\Realtime\Payload\Action\AckAction $ack
      */
     public function onClientContextAck(
-        \InstagramAPI\Realtime\Action\Ack $ack)
+        \InstagramAPI\Realtime\Payload\Action\AckAction $ack)
     {
         $context = $ack->getPayload()->getClientContext();
-        $this->_logger->info(sprintf('Received ACK for %s with status %s%s', $context, $ack->getStatus()));
+        $this->_logger->info(sprintf('Received ACK for %s with status %s', $context, $ack->getStatus()));
         // Check if we have deferred object for this client_context.
         if (!isset($this->_contexts[$context])) {
             return;
@@ -180,7 +196,7 @@ class RealtimeHttpServer
         });
         // Set up promise.
         return $deferred->promise()
-            ->then(function (\InstagramAPI\Realtime\Action\Ack $ack) use ($timeout) {
+            ->then(function (\InstagramAPI\Realtime\Payload\Action\AckAction $ack) use ($timeout) {
                 // Cancel reject timer.
                 $timeout->cancel();
                 // Reply with info from $ack.
@@ -223,6 +239,26 @@ class RealtimeHttpServer
                 return $this->_handleClientContext($this->_rtc->indicateActivityInDirectThread($params['threadId'], (bool) $params['flag']));
             case '/message':
                 return $this->_handleClientContext($this->_rtc->sendTextToDirect($params['threadId'], $params['text']));
+            case '/post':
+                return $this->_handleClientContext($this->_rtc->sendPostToDirect($params['threadId'], $params['mediaId'], [
+                    'text' => isset($params['text']) ? $params['text'] : null,
+                ]));
+            case '/story':
+                return $this->_handleClientContext($this->_rtc->sendStoryToDirect($params['threadId'], $params['storyId'], [
+                    'text' => isset($params['text']) ? $params['text'] : null,
+                ]));
+            case '/profile':
+                return $this->_handleClientContext($this->_rtc->sendProfileToDirect($params['threadId'], $params['userId'], [
+                    'text' => isset($params['text']) ? $params['text'] : null,
+                ]));
+            case '/location':
+                return $this->_handleClientContext($this->_rtc->sendLocationToDirect($params['threadId'], $params['locationId'], [
+                    'text' => isset($params['text']) ? $params['text'] : null,
+                ]));
+            case '/hashtag':
+                return $this->_handleClientContext($this->_rtc->sendHashtagToDirect($params['threadId'], $params['hashtag'], [
+                    'text' => isset($params['text']) ? $params['text'] : null,
+                ]));
             case '/like':
                 return $this->_handleClientContext($this->_rtc->sendLikeToDirect($params['threadId']));
             case '/likeItem':

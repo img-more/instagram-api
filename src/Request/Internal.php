@@ -13,12 +13,16 @@ use InstagramAPI\Exception\NetworkException;
 use InstagramAPI\Exception\ThrottledException;
 use InstagramAPI\Exception\UploadFailedException;
 use InstagramAPI\Media\MediaDetails;
+use InstagramAPI\Media\Video\FFmpeg;
 use InstagramAPI\Media\Video\InstagramThumbnail;
+use InstagramAPI\Media\Video\VideoDetails;
 use InstagramAPI\Request;
 use InstagramAPI\Request\Metadata\Internal as InternalMetadata;
 use InstagramAPI\Response;
 use InstagramAPI\Signatures;
 use InstagramAPI\Utils;
+use Winbox\Args;
+use function GuzzleHttp\Psr7\stream_for;
 
 /**
  * Collection of various INTERNAL library functions.
@@ -369,7 +373,9 @@ class Internal extends RequestCollection
         }
 
         try {
-            if ($this->_useResumableVideoUploader($targetFeed, $internalMetadata)) {
+            if ($this->_useSegmentedVideoUploader($targetFeed, $internalMetadata)) {
+                $this->_uploadSegmentedVideo($targetFeed, $internalMetadata);
+            } elseif ($this->_useResumableVideoUploader($targetFeed, $internalMetadata)) {
                 $this->_uploadResumableVideo($targetFeed, $internalMetadata);
             } else {
                 // Request parameters for uploading a new video.
@@ -429,7 +435,7 @@ class Internal extends RequestCollection
         $internalMetadata = $this->uploadVideo($targetFeed, $videoFilename, $internalMetadata);
 
         // Attempt to upload the thumbnail, associated with our video's ID.
-        $this->uploadVideoThumbnail($targetFeed, $internalMetadata);
+        $this->uploadVideoThumbnail($targetFeed, $internalMetadata, $externalMetadata);
 
         // Configure the uploaded video and attach it to our timeline/story.
         try {
@@ -460,6 +466,7 @@ class Internal extends RequestCollection
      *
      * @param int              $targetFeed       One of the FEED_X constants.
      * @param InternalMetadata $internalMetadata Internal library-generated metadata object.
+     * @param array            $externalMetadata (optional) User-provided metadata key-value pairs.
      *
      * @throws \InvalidArgumentException
      * @throws \InstagramAPI\Exception\InstagramException
@@ -467,7 +474,8 @@ class Internal extends RequestCollection
      */
     public function uploadVideoThumbnail(
         $targetFeed,
-        InternalMetadata $internalMetadata)
+        InternalMetadata $internalMetadata,
+        array $externalMetadata = [])
     {
         if ($internalMetadata->getVideoDetails() === null) {
             throw new \InvalidArgumentException('Video details are missing from the internal metadata.');
@@ -475,9 +483,13 @@ class Internal extends RequestCollection
 
         try {
             // Automatically crop&resize the thumbnail to Instagram's requirements.
+            $options = ['targetFeed' => $targetFeed];
+            if (isset($externalMetadata['thumbnail_timestamp'])) {
+                $options['thumbnailTimestamp'] = $externalMetadata['thumbnail_timestamp'];
+            }
             $videoThumbnail = new InstagramThumbnail(
                 $internalMetadata->getVideoDetails()->getFilename(),
-                ['targetFeed' => $targetFeed]
+                $options
             );
             // Validate and upload the thumbnail.
             $internalMetadata->setPhotoDetails($targetFeed, $videoThumbnail->getFile());
@@ -990,13 +1002,13 @@ class Internal extends RequestCollection
     }
 
     /**
-     * Get token hash result.
+     * Get zero rating token hash result.
      *
      * @throws \InstagramAPI\Exception\InstagramException
      *
      * @return \InstagramAPI\Response\TokenResultResponse
      */
-    public function getTokenResult()
+    public function getZeroRatingTokenResult()
     {
         $request = $this->ig->request('zr/token/result/')
             ->setNeedsAuth(false)
@@ -1076,9 +1088,6 @@ class Internal extends RequestCollection
     public function getProfileNotice()
     {
         return $this->ig->request('users/profile_notice/')
-            ->addPost('_uuid', $this->ig->uuid)
-            ->addPost('_uid', $this->ig->account_id)
-            ->addPost('_csrftoken', $this->ig->client->getToken())
             ->getResponse(new Response\ProfileNoticeResponse());
     }
 
@@ -1275,7 +1284,7 @@ class Internal extends RequestCollection
      * @throws \LogicException
      * @throws \InstagramAPI\Exception\InstagramException
      *
-     * @return Response\GenericResponse
+     * @return Response\ResumableUploadResponse
      */
     protected function _uploadResumableMedia(
         MediaDetails $mediaDetails,
@@ -1313,8 +1322,8 @@ class Internal extends RequestCollection
                     $uploadRequest
                         ->addHeader('Offset', $offset)
                         ->setBody(new LimitStream($stream, $length - $offset, $offset));
-                    /** @var Response\GenericResponse $response */
-                    $response = $uploadRequest->getResponse(new Response\GenericResponse());
+                    /** @var Response\ResumableUploadResponse $response */
+                    $response = $uploadRequest->getResponse(new Response\ResumableUploadResponse());
 
                     return $response;
                 } catch (ThrottledException $e) {
@@ -1671,6 +1680,103 @@ class Internal extends RequestCollection
     }
 
     /**
+     * Performs a segmented upload of a video file, with support for retries.
+     *
+     * @param int              $targetFeed       One of the FEED_X constants.
+     * @param InternalMetadata $internalMetadata Internal library-generated metadata object.
+     *
+     * @throws \Exception
+     * @throws \InvalidArgumentException
+     * @throws \RuntimeException
+     * @throws \LogicException
+     * @throws \InstagramAPI\Exception\InstagramException
+     *
+     * @return \InstagramAPI\Response\GenericResponse
+     */
+    protected function _uploadSegmentedVideo(
+        $targetFeed,
+        InternalMetadata $internalMetadata)
+    {
+        $videoDetails = $internalMetadata->getVideoDetails();
+
+        // We must split the video into segments before running any requests.
+        $segments = $this->_splitVideoIntoSegments($videoDetails);
+
+        $uploadParams = $this->_getVideoUploadParams($targetFeed, $internalMetadata);
+        $uploadParams = Utils::reorderByHashCode($uploadParams);
+
+        // This request gives us a stream identifier.
+        $startRequest = new Request($this->ig, sprintf(
+            'https://i.instagram.com/rupload_igvideo/%s?segmented=true&phase=start',
+            Signatures::generateUUID()
+        ));
+        $startRequest
+            ->setAddDefaultHeaders(false)
+            ->addHeader('X-Instagram-Rupload-Params', json_encode($uploadParams))
+            // Dirty hack to make a POST request.
+            ->setBody(stream_for());
+        /** @var Response\SegmentedStartResponse $startResponse */
+        $startResponse = $startRequest->getResponse(new Response\SegmentedStartResponse());
+        $streamId = $startResponse->getStreamId();
+
+        // Upload the segments.
+        try {
+            $offset = 0;
+            // Yep, no UUID here like in other resumable uploaders. Seems like a bug.
+            $waterfallId = Utils::generateUploadId();
+            foreach ($segments as $segment) {
+                $endpoint = sprintf(
+                    'https://i.instagram.com/rupload_igvideo/%s-%d-%d?segmented=true&phase=transfer',
+                    md5($segment->getFilename()),
+                    0,
+                    $segment->getFilesize()
+                );
+
+                $offsetTemplate = new Request($this->ig, $endpoint);
+                $offsetTemplate
+                    ->setAddDefaultHeaders(false)
+                    ->addHeader('Segment-Start-Offset', $offset)
+                    // 1 => Audio, 2 => Video, 3 => Mixed.
+                    ->addHeader('Segment-Type', $segment->getAudioCodec() !== null ? 1 : 2)
+                    ->addHeader('Stream-Id', $streamId)
+                    ->addHeader('X_FB_VIDEO_WATERFALL_ID', $waterfallId)
+                    ->addHeader('X-Instagram-Rupload-Params', json_encode($uploadParams));
+
+                $uploadTemplate = clone $offsetTemplate;
+                $uploadTemplate
+                    ->addHeader('X-Entity-Type', 'video/mp4')
+                    ->addHeader('X-Entity-Name', basename(parse_url($endpoint, PHP_URL_PATH)))
+                    ->addHeader('X-Entity-Length', $segment->getFilesize());
+
+                $this->_uploadResumableMedia($segment, $offsetTemplate, $uploadTemplate);
+                // Offset seems to be used just for ordering the segments.
+                $offset += $segment->getFilesize();
+            }
+        } finally {
+            // Remove the segments, because we don't need them anymore.
+            foreach ($segments as $segment) {
+                @unlink($segment->getFilename());
+            }
+        }
+
+        // Finalize the upload.
+        $endRequest = new Request($this->ig, sprintf(
+            'https://i.instagram.com/rupload_igvideo/%s?segmented=true&phase=end',
+            Signatures::generateUUID()
+        ));
+        $endRequest
+            ->setAddDefaultHeaders(false)
+            ->addHeader('Stream-Id', $streamId)
+            ->addHeader('X-Instagram-Rupload-Params', json_encode($uploadParams))
+            // Dirty hack to make a POST request.
+            ->setBody(stream_for());
+        /** @var Response\GenericResponse $result */
+        $result = $endRequest->getResponse(new Response\GenericResponse());
+
+        return $result;
+    }
+
+    /**
      * Performs a resumable upload of a video file, with support for retries.
      *
      * @param int              $targetFeed       One of the FEED_X constants.
@@ -1726,6 +1832,70 @@ class Internal extends RequestCollection
     }
 
     /**
+     * Determine whether to use segmented video uploader based on target feed and internal metadata.
+     *
+     * @param int              $targetFeed       One of the FEED_X constants.
+     * @param InternalMetadata $internalMetadata Internal library-generated metadata object.
+     *
+     * @return bool
+     */
+    protected function _useSegmentedVideoUploader(
+        $targetFeed,
+        InternalMetadata $internalMetadata)
+    {
+        // We need to have ffmpeg to segment the video.
+        try {
+            FFmpeg::factory();
+        } catch (\Exception $e) {
+            return false;
+        }
+
+        // There is no need to segment short videos.
+        $minDuration = $this->ig->getExperimentParam(
+            'ig_android_video_segmented_upload_universe',
+            // NOTE: This typo is intentional. Instagram named it that way.
+            'min_duration_threashold_sec_for_segmentation',
+            10
+        );
+        if ($internalMetadata->getVideoDetails()->getDuration() < $minDuration) {
+            return false;
+        }
+
+        // Check experiments for the target feed.
+        switch ($targetFeed) {
+            case Constants::FEED_TIMELINE_ALBUM:
+                $result = false;
+                break;
+            case Constants::FEED_TIMELINE:
+                $result = $this->ig->isExperimentEnabled(
+                    'ig_android_video_segmented_upload_universe',
+                    'is_enabled_segment_followers');
+                break;
+            case Constants::FEED_DIRECT:
+                $result = $this->ig->isExperimentEnabled(
+                    'ig_android_direct_video_segmented_upload_universe',
+                    'is_enabled_segment_direct');
+                break;
+            case Constants::FEED_STORY:
+                $result = $this->ig->isExperimentEnabled(
+                    'ig_android_reel_raven_video_segmented_upload_universe',
+                    'is_enabled_segment_reel');
+                break;
+            case Constants::FEED_DIRECT_STORY:
+                $result = $this->ig->isExperimentEnabled(
+                    'ig_android_reel_raven_video_segmented_upload_universe',
+                    'is_enabled_segment_raven');
+                break;
+            default:
+                $result = $this->ig->isExperimentEnabled(
+                    'ig_android_video_segmented_upload_universe',
+                    'is_enabled_segment_unknown');
+        }
+
+        return $result;
+    }
+
+    /**
      * Determine whether to use resumable video uploader based on target feed and internal metadata.
      *
      * @param int              $targetFeed       One of the FEED_X constants.
@@ -1737,7 +1907,6 @@ class Internal extends RequestCollection
         $targetFeed,
         InternalMetadata $internalMetadata)
     {
-        // TODO: use $internalMetadata object for additional checks.
         switch ($targetFeed) {
             case Constants::FEED_TIMELINE_ALBUM:
                 $result = false;
@@ -1763,7 +1932,9 @@ class Internal extends RequestCollection
                     'is_enabled_fbupload_story_share');
                 break;
             default:
-                $result = false;
+                $result = $this->ig->isExperimentEnabled(
+                    'ig_android_upload_reliability_universe',
+                    'is_enabled_fbupload_unknown');
         }
 
         return $result;
@@ -1838,6 +2009,103 @@ class Internal extends RequestCollection
                 $result['for_direct_story'] = '1';
                 break;
             default:
+        }
+
+        return $result;
+    }
+
+    /**
+     * Split the video file into segments.
+     *
+     * @param VideoDetails $videoDetails
+     * @param FFmpeg|null  $ffmpeg
+     * @param string|null  $outputDirectory
+     *
+     * @throws \Exception
+     *
+     * @return VideoDetails[]
+     */
+    protected function _splitVideoIntoSegments(
+        VideoDetails $videoDetails,
+        FFmpeg $ffmpeg = null,
+        $outputDirectory = null)
+    {
+        if ($ffmpeg === null) {
+            $ffmpeg = FFmpeg::factory();
+        }
+        if ($outputDirectory === null) {
+            $outputDirectory = Utils::$defaultTmpPath === null ? sys_get_temp_dir() : Utils::$defaultTmpPath;
+        }
+        // Check whether the output directory is valid.
+        $targetDirectory = realpath($outputDirectory);
+        if ($targetDirectory === false || !is_dir($targetDirectory) || !is_writable($targetDirectory)) {
+            throw new \RuntimeException(sprintf(
+                'Directory "%s" is missing or is not writable.',
+                $outputDirectory
+            ));
+        }
+
+        $prefix = sha1($videoDetails->getFilename().uniqid('', true));
+        // Video segments will be uploaded before the audio one, hence the number.
+        $pattern = "{$outputDirectory}/{$prefix}_{0video,1audio}.*.mp4";
+
+        try {
+            // Split the video stream into a multiple segments by time.
+            $ffmpeg->run(sprintf(
+                '-i %s -c:v copy -an -dn -sn -f segment -segment_time %d -segment_format mp4 %s',
+                Args::escape($videoDetails->getFilename()),
+                (int) $this->ig->getExperimentParam(
+                    'ig_android_video_segmented_upload_universe',
+                    'segment_duration_sec',
+                    5
+                ),
+                Args::escape(sprintf(
+                    '%s%s%s_0video.%%03d.mp4',
+                    $outputDirectory,
+                    DIRECTORY_SEPARATOR,
+                    $prefix
+                ))
+            ));
+
+            if ($videoDetails->getAudioCodec() !== null) {
+                // Save the audio stream in one segment.
+                $ffmpeg->run(sprintf(
+                    '-i %s -c:a copy -vn -dn -sn -f mp4 %s',
+                    Args::escape($videoDetails->getFilename()),
+                    Args::escape(sprintf(
+                        '%s%s%s_1audio.000.mp4',
+                        $outputDirectory,
+                        DIRECTORY_SEPARATOR,
+                        $prefix
+                    ))
+                ));
+            }
+        } catch (\RuntimeException $e) {
+            // Find and remove all segments (if any).
+            $files = glob($pattern, GLOB_BRACE);
+            foreach ($files as $file) {
+                @unlink($file);
+            }
+            // Re-throw the exception.
+            throw $e;
+        }
+
+        // Collect segments.
+        $files = glob($pattern, GLOB_BRACE);
+        $result = [];
+
+        try {
+            // Wrap them into VideoDetails.
+            foreach ($files as $file) {
+                $result[] = new VideoDetails($file);
+            }
+        } catch (\Exception $e) {
+            // Cleanup when something went wrong.
+            foreach ($files as $file) {
+                @unlink($file);
+            }
+
+            throw $e;
         }
 
         return $result;
