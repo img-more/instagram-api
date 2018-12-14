@@ -620,6 +620,7 @@ class Direct extends RequestCollection
         $videoFilename,
         array $options = [])
     {
+        print('SEND VIDEO');
         // Direct videos use different upload IDs.
         $internalMetadata = new InternalMetadata(Utils::generateUploadId(true));
         // Attempt to upload the video data.
