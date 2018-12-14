@@ -51,6 +51,11 @@ class Auth implements AuthInterface
             return sprintf('%s=%s', $cookie->getName(), $cookie->getValue());
         }
 
+        $cookie = $this->_instagram->client->getCookie('sessionid', '.instagram.com');
+        if ($cookie !== null) {
+            return sprintf('%s=%s', $cookie->getName(), $cookie->getValue());
+        }
+
         throw new \RuntimeException('No session cookie was found.');
     }
 
