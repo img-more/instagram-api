@@ -18,7 +18,7 @@ class TimelineConstraints implements ConstraintsInterface
      *
      * @see https://help.instagram.com/1469029763400082
      */
-    const MIN_RATIO = 0.8;
+    const MIN_RATIO = 0.5;
 
     /**
      * Highest allowed general media aspect ratio (1.91:1, meaning landscape).
