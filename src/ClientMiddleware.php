@@ -1,19 +1,20 @@
 <?php
 
-namespace InstagramAPI\Middleware;
+namespace InstagramAPI;
 
+use GuzzleHttp\Middleware;
 use Psr\Http\Message\RequestInterface;
 
 /**
- * Fake cookies middleware.
+ * Custom Guzzle middleware.
  *
  * This middleware sits between our class and Guzzle and gives us full access to
- * inject fake cookies into requests before speaking to Instagram's server.
- * Thus allowing us to perfectly emulate unusual Instagram API queries.
+ * inject or modify any aspect of our requests before speaking to Instagram's
+ * server. Thus allowing us to perfectly emulate unusual Instagram API queries.
  *
  * @author SteveJobzniak (https://github.com/SteveJobzniak)
  */
-class FakeCookies
+class ClientMiddleware
 {
     /**
      * Injects fake cookies which aren't in our cookie jar.
@@ -22,22 +23,22 @@ class FakeCookies
      *
      * @var array
      */
-    private $_cookies;
+    private $_fakeCookies;
 
     /**
      * Constructor.
      */
     public function __construct()
     {
-        $this->clear();
+        $this->clearFakeCookies();
     }
 
     /**
      * Removes all fake cookies so they won't be added to further requests.
      */
-    public function clear()
+    public function clearFakeCookies()
     {
-        $this->_cookies = [];
+        $this->_fakeCookies = [];
     }
 
     /**
@@ -45,9 +46,9 @@ class FakeCookies
      *
      * @return array
      */
-    public function cookies()
+    public function getFakeCookies()
     {
-        return $this->_cookies;
+        return $this->_fakeCookies;
     }
 
     /**
@@ -68,14 +69,14 @@ class FakeCookies
      * @param string $value     The value of the cookie.
      * @param bool   $singleUse If TRUE, the cookie will be deleted after 1 use.
      */
-    public function add(
+    public function addFakeCookie(
         $name,
         $value,
         $singleUse = true)
     {
         // This overwrites any existing fake cookie with the same name, which is
         // intentional since the names of cookies must be unique.
-        $this->_cookies[$name] = [
+        $this->_fakeCookies[$name] = [
             'value'     => $value,
             'singleUse' => $singleUse,
         ];
@@ -88,10 +89,10 @@ class FakeCookies
      *
      * @param string $name The name of the cookie. CASE SENSITIVE!
      */
-    public function delete(
+    public function deleteFakeCookie(
         $name)
     {
-        unset($this->_cookies[$name]);
+        unset($this->_fakeCookies[$name]);
     }
 
     /**
@@ -107,11 +108,13 @@ class FakeCookies
     public function __invoke(
         callable $handler)
     {
+        $self = &$this;
+
         return function (
             RequestInterface $request,
             array $options
-        ) use ($handler) {
-            $fakeCookies = $this->cookies();
+        ) use ($handler, &$self) {
+            $fakeCookies = $self->getFakeCookies();
 
             // Pass request through unmodified if no work to do (to save CPU).
             if (count($fakeCookies) === 0) {
@@ -146,7 +149,7 @@ class FakeCookies
 
                 // Delete the cookie now if it was a single-use cookie.
                 if ($cookieInfo['singleUse']) {
-                    $this->delete($name);
+                    $self->deleteFakeCookie($name);
                 }
             }
 

@@ -29,9 +29,6 @@ class ConstraintsFactory
             case Constants::FEED_DIRECT_STORY:
                 $result = new DirectStoryConstraints();
                 break;
-            case Constants::FEED_TV:
-                $result = new TvConstraints();
-                break;
             case Constants::FEED_TIMELINE_ALBUM:
                 $result = new AlbumConstraints();
                 break;

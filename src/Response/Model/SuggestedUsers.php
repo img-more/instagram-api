@@ -12,7 +12,6 @@ use InstagramAPI\AutoPropertyMapper;
  * @method mixed getLandingSiteTitle()
  * @method mixed getLandingSiteType()
  * @method mixed getNetegoType()
- * @method SuggestionCard[] getSuggestionCards()
  * @method Suggestion[] getSuggestions()
  * @method mixed getTitle()
  * @method string getTrackingToken()
@@ -24,7 +23,6 @@ use InstagramAPI\AutoPropertyMapper;
  * @method bool isLandingSiteTitle()
  * @method bool isLandingSiteType()
  * @method bool isNetegoType()
- * @method bool isSuggestionCards()
  * @method bool isSuggestions()
  * @method bool isTitle()
  * @method bool isTrackingToken()
@@ -36,7 +34,6 @@ use InstagramAPI\AutoPropertyMapper;
  * @method $this setLandingSiteTitle(mixed $value)
  * @method $this setLandingSiteType(mixed $value)
  * @method $this setNetegoType(mixed $value)
- * @method $this setSuggestionCards(SuggestionCard[] $value)
  * @method $this setSuggestions(Suggestion[] $value)
  * @method $this setTitle(mixed $value)
  * @method $this setTrackingToken(string $value)
@@ -48,7 +45,6 @@ use InstagramAPI\AutoPropertyMapper;
  * @method $this unsetLandingSiteTitle()
  * @method $this unsetLandingSiteType()
  * @method $this unsetNetegoType()
- * @method $this unsetSuggestionCards()
  * @method $this unsetSuggestions()
  * @method $this unsetTitle()
  * @method $this unsetTrackingToken()
@@ -69,7 +65,6 @@ class SuggestedUsers extends AutoPropertyMapper
         'landing_site_title' => '',
         'upsell_fb_pos'      => '',
         'suggestions'        => 'Suggestion[]',
-        'suggestion_cards'   => 'SuggestionCard[]',
         'netego_type'        => '',
     ];
 }

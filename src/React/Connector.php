@@ -4,7 +4,6 @@ namespace InstagramAPI\React;
 
 use Clue\React\HttpProxy\ProxyConnector as HttpConnectProxy;
 use Clue\React\Socks\Client as SocksProxy;
-use GuzzleHttp\Psr7\Uri;
 use InstagramAPI\Instagram;
 use React\EventLoop\LoopInterface;
 use React\Promise\PromiseInterface;
@@ -50,9 +49,7 @@ class Connector implements ConnectorInterface
     public function connect(
         $uri)
     {
-        $uriObj = new Uri($uri);
-        $host = $this->_instagram->client->zeroRating()->rewrite($uriObj->getHost());
-        $uriObj = $uriObj->withHost($host);
+        $host = parse_url($uri, PHP_URL_HOST);
         if (!isset($this->_connectors[$host])) {
             try {
                 $this->_connectors[$host] = $this->_getSecureConnector(
@@ -63,9 +60,8 @@ class Connector implements ConnectorInterface
                 return new RejectedPromise($e);
             }
         }
-        $niceUri = ltrim((string) $uriObj, '/');
         /** @var PromiseInterface $promise */
-        $promise = $this->_connectors[$host]->connect($niceUri);
+        $promise = $this->_connectors[$host]->connect($uri);
 
         return $promise;
     }

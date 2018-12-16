@@ -9,8 +9,6 @@ use GuzzleHttp\HandlerStack;
 use InstagramAPI\Exception\InstagramException;
 use InstagramAPI\Exception\LoginRequiredException;
 use InstagramAPI\Exception\ServerMessageThrower;
-use InstagramAPI\Middleware\FakeCookies;
-use InstagramAPI\Middleware\ZeroRating;
 use LazyJsonMapper\Exception\LazyJsonMapperException;
 use Psr\Http\Message\RequestInterface as HttpRequestInterface;
 use Psr\Http\Message\ResponseInterface as HttpResponseInterface;
@@ -87,14 +85,9 @@ class Client
     private $_guzzleClient;
 
     /**
-     * @var \InstagramAPI\Middleware\FakeCookies
+     * @var \InstagramAPI\ClientMiddleware
      */
-    private $_fakeCookies;
-
-    /**
-     * @var \InstagramAPI\Middleware\ZeroRating
-     */
-    private $_zeroRating;
+    private $_clientMiddleware;
 
     /**
      * @var \GuzzleHttp\Cookie\CookieJar
@@ -110,13 +103,6 @@ class Client
      * @var int
      */
     private $_cookieJarLastSaved;
-
-    /**
-     * The flag to force cURL to reopen a fresh connection.
-     *
-     * @var bool
-     */
-    private $_resetConnection;
 
     /**
      * Constructor.
@@ -137,12 +123,9 @@ class Client
         // Guzzle's default middleware (cookie jar support, etc).
         $stack = HandlerStack::create();
 
-        // Create our cookies middleware and add it to the stack.
-        $this->_fakeCookies = new FakeCookies();
-        $stack->push($this->_fakeCookies, 'fake_cookies');
-
-        $this->_zeroRating = new ZeroRating();
-        $stack->push($this->_zeroRating, 'zero_rewrite');
+        // Create our custom Guzzle client middleware and add it to the stack.
+        $this->_clientMiddleware = new ClientMiddleware();
+        $stack->push($this->_clientMiddleware);
 
         // Default request options (immutable after client creation).
         $this->_guzzleClient = new GuzzleClient([
@@ -158,8 +141,6 @@ class Client
             // We'll instead MANUALLY be throwing on certain other HTTP codes.
             'http_errors'     => false,
         ]);
-
-        $this->_resetConnection = false;
     }
 
     /**
@@ -186,9 +167,6 @@ class Client
         if ($this->getToken() === null) {
             $this->_parent->isMaybeLoggedIn = false;
         }
-
-        // Load rewrite rules (if any).
-        $this->zeroRating()->update($this->_parent->settings->getRewriteRules());
     }
 
     /**
@@ -368,7 +346,6 @@ class Client
         $value)
     {
         $this->_proxy = $value;
-        $this->_resetConnection = true;
     }
 
     /**
@@ -396,7 +373,6 @@ class Client
         $value)
     {
         $this->_outputInterface = $value;
-        $this->_resetConnection = true;
     }
 
     /**
@@ -627,10 +603,6 @@ class Client
         if (is_string($this->_outputInterface) && $this->_outputInterface !== '') {
             $finalOptions['curl'][CURLOPT_INTERFACE] = $this->_outputInterface;
         }
-        if ($this->_resetConnection) {
-            $finalOptions['curl'][CURLOPT_FRESH_CONNECT] = true;
-            $this->_resetConnection = false;
-        }
 
         return $finalOptions;
     }
@@ -758,7 +730,7 @@ class Client
 
             $this->_printDebug(
                 $request->getMethod(),
-                $this->_zeroRating->rewrite((string) $request->getUri()),
+                (string) $request->getUri(),
                 $uploadedBody,
                 $uploadedBytes,
                 $guzzleResponse,
@@ -830,22 +802,12 @@ class Client
     }
 
     /**
-     * Get the cookies middleware instance.
+     * Get the client middleware instance.
      *
-     * @return FakeCookies
+     * @return ClientMiddleware
      */
-    public function fakeCookies()
+    public function getMiddleware()
     {
-        return $this->_fakeCookies;
-    }
-
-    /**
-     * Get the zero rating rewrite middleware instance.
-     *
-     * @return ZeroRating
-     */
-    public function zeroRating()
-    {
-        return $this->_zeroRating;
+        return $this->_clientMiddleware;
     }
 }

@@ -5,7 +5,7 @@ namespace InstagramAPI\Response\Model;
 use InstagramAPI\AutoPropertyMapper;
 
 /**
- * BusinessEdge.
+ * BusinessEdges.
  *
  * @method mixed getCursor()
  * @method BusinessNode getNode()
@@ -16,7 +16,7 @@ use InstagramAPI\AutoPropertyMapper;
  * @method $this unsetCursor()
  * @method $this unsetNode()
  */
-class BusinessEdge extends AutoPropertyMapper
+class BusinessEdges extends AutoPropertyMapper
 {
     const JSON_PROPERTY_MAP = [
         'node'   => 'BusinessNode',

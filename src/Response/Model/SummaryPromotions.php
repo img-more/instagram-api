@@ -7,19 +7,19 @@ use InstagramAPI\AutoPropertyMapper;
 /**
  * SummaryPromotions.
  *
- * @method BusinessEdge[] getEdges()
- * @method PageInfo getPageInfo()
+ * @method BusinessEdges[] getEdges()
+ * @method BusinessPageInfo getPageInfo()
  * @method bool isEdges()
  * @method bool isPageInfo()
- * @method $this setEdges(BusinessEdge[] $value)
- * @method $this setPageInfo(PageInfo $value)
+ * @method $this setEdges(BusinessEdges[] $value)
+ * @method $this setPageInfo(BusinessPageInfo $value)
  * @method $this unsetEdges()
  * @method $this unsetPageInfo()
  */
 class SummaryPromotions extends AutoPropertyMapper
 {
     const JSON_PROPERTY_MAP = [
-        'edges'     => 'BusinessEdge[]',
-        'page_info' => 'PageInfo',
+        'edges'     => 'BusinessEdges[]',
+        'page_info' => 'BusinessPageInfo',
     ];
 }

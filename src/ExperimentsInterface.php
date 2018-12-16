@@ -9,14 +9,12 @@ interface ExperimentsInterface
      *
      * @param string $experiment
      * @param string $param
-     * @param bool   $default
      *
      * @return bool
      */
     public function isExperimentEnabled(
         $experiment,
-        $param,
-        $default = false);
+        $param);
 
     /**
      * Get a parameter value for the given experiment.

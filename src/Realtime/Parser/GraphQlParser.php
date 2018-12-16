@@ -8,7 +8,6 @@ use InstagramAPI\Client;
 use InstagramAPI\Realtime\Message;
 use InstagramAPI\Realtime\ParserInterface;
 use InstagramAPI\Realtime\Subscription\GraphQl\AppPresenceSubscription;
-use InstagramAPI\Realtime\Subscription\GraphQl\ZeroProvisionSubscription;
 
 class GraphQlParser implements ParserInterface
 {
@@ -20,9 +19,8 @@ class GraphQlParser implements ParserInterface
     const MODULE_DIRECT = 'direct';
 
     const TOPIC_TO_MODULE_ENUM = [
-        self::TOPIC_DIRECT               => self::MODULE_DIRECT,
-        AppPresenceSubscription::QUERY   => AppPresenceSubscription::ID,
-        ZeroProvisionSubscription::QUERY => ZeroProvisionSubscription::ID,
+        self::TOPIC_DIRECT             => self::MODULE_DIRECT,
+        AppPresenceSubscription::QUERY => AppPresenceSubscription::ID,
     ];
 
     /**

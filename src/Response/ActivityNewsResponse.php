@@ -16,7 +16,6 @@ use InstagramAPI\Response;
  * @method mixed getMessage()
  * @method Model\Story[] getNewStories()
  * @method Model\Story[] getOldStories()
- * @method mixed getPartition()
  * @method string getStatus()
  * @method Model\Subscription getSubscription()
  * @method Model\_Message[] get_Messages()
@@ -29,7 +28,6 @@ use InstagramAPI\Response;
  * @method bool isMessage()
  * @method bool isNewStories()
  * @method bool isOldStories()
- * @method bool isPartition()
  * @method bool isStatus()
  * @method bool isSubscription()
  * @method bool is_Messages()
@@ -42,7 +40,6 @@ use InstagramAPI\Response;
  * @method $this setMessage(mixed $value)
  * @method $this setNewStories(Model\Story[] $value)
  * @method $this setOldStories(Model\Story[] $value)
- * @method $this setPartition(mixed $value)
  * @method $this setStatus(string $value)
  * @method $this setSubscription(Model\Subscription $value)
  * @method $this set_Messages(Model\_Message[] $value)
@@ -55,7 +52,6 @@ use InstagramAPI\Response;
  * @method $this unsetMessage()
  * @method $this unsetNewStories()
  * @method $this unsetOldStories()
- * @method $this unsetPartition()
  * @method $this unsetStatus()
  * @method $this unsetSubscription()
  * @method $this unset_Messages()
@@ -69,7 +65,6 @@ class ActivityNewsResponse extends Response
         'friend_request_stories' => 'Model\Story[]',
         'counts'                 => 'Model\Counts',
         'subscription'           => 'Model\Subscription',
-        'partition'              => '',
         'continuation_token'     => '',
         'ads_manager'            => '',
         'aymf'                   => 'Model\Aymf',
